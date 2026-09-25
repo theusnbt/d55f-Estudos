@@ -1,138 +1,83 @@
-import os
-import datetime
-import tkinter as tk
-from tkinter import filedialog, messagebox
+"""
+Script para a câmera Intel RealSense D455f.
+Abre uma janela ao vivo mostrando a imagem colorida e a distância
+(em metros) do ponto central. Ao apertar 's', salva a imagem atual
+(já com a distância desenhada) em um arquivo .png.
 
-import cv2
-import numpy as np
-import pyrealsense2 as rs
+Requisitos:
+    pip install pyrealsense2 opencv-python numpy
 
+Uso:
+    python3 d455f_foto_distancia.py
 
-class CameraApp:
-    def __init__(self, root):
-        self.root = root
-        self.root.title("D455f - Captura de Fotos")
-        self.root.geometry("760x560")
-        self.root.minsize(640, 480)
-        self.root.protocol("WM_DELETE_WINDOW", self.on_close)
+Pressione 's' para salvar uma foto.
+Pressione 'q' para sair.
+"""
 
-        self.pipeline = rs.pipeline()
-        self.config = rs.config()
-        self.config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
+import pyrealsense2 as rs  # fala com a câmera
+import numpy as np         # organiza a imagem como números
+import cv2                  # mostra e salva a imagem
 
-        self.current_frame = None
-        self.preview_image = None
+# Cria o gerenciador da câmera
+pipeline = rs.pipeline()
+config = rs.config()
 
-        self.frame_label = tk.Label(root, bg="black")
-        self.frame_label.pack(padx=12, pady=(12, 8), fill="both", expand=True)
+# Pede a distância (depth) e a imagem colorida (color), 640x480, 30 fps
+config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 30)
+config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
 
-        self.status_var = tk.StringVar(value="Iniciando câmera...")
-        self.status_label = tk.Label(root, textvariable=self.status_var, anchor="w")
-        self.status_label.pack(fill="x", padx=12, pady=(0, 8))
+# Liga a câmera
+pipeline.start(config)
 
-        button_frame = tk.Frame(root)
-        button_frame.pack(padx=12, pady=(0, 12), fill="x")
+# Encaixa a imagem de distância com a imagem colorida
+align = rs.align(rs.stream.color)
 
-        self.capture_button = tk.Button(
-            button_frame,
-            text="Tirar foto",
-            command=self.capture_photo,
-            width=18,
-            height=2,
-            font=("Arial", 11, "bold"),
-            bg="#2E86DE",
-            fg="white",
-        )
-        self.capture_button.pack(side="left", padx=(0, 12))
+contador_fotos = 0  # usado para não sobrescrever a foto anterior
 
-        self.save_button = tk.Button(
-            button_frame,
-            text="Salvar como...",
-            command=self.save_photo,
-            width=18,
-            height=2,
-            font=("Arial", 11),
-        )
-        self.save_button.pack(side="left")
+try:
+    while True:  # loop ao vivo
+        frames = pipeline.wait_for_frames()
+        aligned_frames = align.process(frames)
 
-        self.start_camera()
+        depth_frame = aligned_frames.get_depth_frame()
+        color_frame = aligned_frames.get_color_frame()
 
-    def start_camera(self):
-        try:
-            self.pipeline.start(self.config)
-            for _ in range(30):
-                self.pipeline.wait_for_frames()
+        if not depth_frame or not color_frame:
+            continue
 
-            self.status_var.set("Câmera pronta. Preview em tempo real.")
-            self.update_preview()
-        except Exception as exc:
-            self.status_var.set(f"Erro ao iniciar a câmera: {exc}")
-            messagebox.showerror("Erro da câmera", f"Não foi possível abrir a câmera RealSense.\n\n{exc}")
+        color_image = np.asanyarray(color_frame.get_data())
 
-    def update_preview(self):
-        if self.pipeline is None:
-            return
+        # Acha o pixel do centro
+        h, w = color_image.shape[:2]
+        cx, cy = w // 2, h // 2
 
-        try:
-            frames = self.pipeline.wait_for_frames()
-            color_frame = frames.get_color_frame()
+        # Mede a distância nesse ponto
+        distancia = depth_frame.get_distance(cx, cy)
 
-            if not color_frame:
-                self.root.after(30, self.update_preview)
-                return
-
-            color_image = np.asanyarray(color_frame.get_data())
-            self.current_frame = color_image
-            self.display_frame(color_image)
-
-        except Exception as exc:
-            self.status_var.set(f"Erro no preview: {exc}")
-            return
-
-        self.root.after(30, self.update_preview)
-
-    def display_frame(self, image):
-        image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        image_rgb = cv2.resize(image_rgb, (640, 480))
-
-        _, buffer = cv2.imencode(".ppm", image_rgb)
-        photo = tk.PhotoImage(data=buffer.tobytes())
-
-        self.frame_label.configure(image=photo)
-        self.frame_label.image = photo
-
-    def capture_photo(self):
-        if self.current_frame is None:
-            self.status_var.set("Nenhuma imagem capturada ainda.")
-            return
-
-        default_name = f"foto_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
-        filename = filedialog.asksaveasfilename(
-            initialfile=default_name,
-            defaultextension=".png",
-            filetypes=[("PNG", "*.png"), ("Todos os arquivos", "*.*")],
-            title="Salvar foto",
+        # Desenha o marcador e o texto (isso fica gravado na foto também,
+        # já que desenhamos direto em cima da imagem antes de salvar)
+        cv2.circle(color_image, (cx, cy), 6, (0, 255, 0), -1)
+        texto = f"Distancia: {distancia:.2f} m"
+        cv2.putText(
+            color_image, texto, (20, 40),
+            cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2
         )
 
-        if not filename:
-            self.status_var.set("Captura cancelada.")
-            return
+        # Mostra a janela ao vivo
+        cv2.imshow("RealSense D455f - Camera + Distancia", color_image)
 
-        cv2.imwrite(filename, cv2.cvtColor(self.current_frame, cv2.COLOR_RGB2BGR))
-        self.status_var.set(f"Foto salva em: {os.path.abspath(filename)}")
+        tecla = cv2.waitKey(1) & 0xFF
 
-    def save_photo(self):
-        self.capture_photo()
+        if tecla == ord('s'):
+            # Salva a imagem exatamente como está sendo mostrada na tela
+            contador_fotos += 1
+            nome_arquivo = f"foto_{contador_fotos}.png"
+            cv2.imwrite(nome_arquivo, color_image)
+            print(f"Foto salva como {nome_arquivo}")
 
-    def on_close(self):
-        try:
-            self.pipeline.stop()
-        except Exception:
-            pass
-        self.root.destroy()
+        elif tecla == ord('q'):
+            break
 
-
-if __name__ == "__main__":
-    root = tk.Tk()
-    app = CameraApp(root)
-    root.mainloop()
+finally:
+    pipeline.stop()
+    cv2.destroyAllWindows()
