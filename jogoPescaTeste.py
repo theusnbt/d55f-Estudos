@@ -105,6 +105,8 @@ try:
         cx, cy = w // 2, h // 2
         distancia = depth_frame.get_distance(cx, cy)
 
+        
+
         if estado == "jogando":
             # Move a barra verde conforme a distância
             barra_y = distancia_para_y(distancia)
