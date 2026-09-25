@@ -1,13 +1,3 @@
-"""
-Interface gráfica simples para capturar fotos com a câmera Intel RealSense D455f.
-
-Requisitos:
-    pip install pyrealsense2 opencv-python numpy
-
-Uso:
-    python3 d455fFotos.py
-"""
-
 import os
 import datetime
 import tkinter as tk
